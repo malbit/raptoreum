@@ -117,7 +117,7 @@ public:
 
     void Reset()
     {
-        *((C*)this) = C();
+        *(static_cast<C*>(this)) = C();
     }
 
     void GetBuf(void* buf, size_t size) const

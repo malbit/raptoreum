@@ -166,14 +166,14 @@ bool CGovernanceVote::Sign(const CKey& key, const CKeyID& keyID)
     std::string strError;
 
     if (sporkManager.IsSporkActive(SPORK_6_NEW_SIGS)) {
-        uint256 hash = GetSignatureHash();
+        uint256 signatureHash = GetSignatureHash();
 
-        if (!CHashSigner::SignHash(hash, key, vchSig)) {
+        if (!CHashSigner::SignHash(signatureHash, key, vchSig)) {
             LogPrintf("CGovernanceVote::Sign -- SignHash() failed\n");
             return false;
         }
 
-        if (!CHashSigner::VerifyHash(hash, keyID, vchSig, strError)) {
+        if (!CHashSigner::VerifyHash(signatureHash, keyID, vchSig, strError)) {
             LogPrintf("CGovernanceVote::Sign -- VerifyHash() failed, error: %s\n", strError);
             return false;
         }
@@ -200,9 +200,7 @@ bool CGovernanceVote::CheckSignature(const CKeyID& keyID) const
     std::string strError;
 
     if (sporkManager.IsSporkActive(SPORK_6_NEW_SIGS)) {
-        uint256 hash = GetSignatureHash();
-
-        if (!CHashSigner::VerifyHash(hash, keyID, vchSig, strError)) {
+        if (!CHashSigner::VerifyHash(GetSignatureHash(), keyID, vchSig, strError)) {
             // could be a signature in old format
             std::string strMessage = smartnodeOutpoint.ToStringShort() + "|" + nParentHash.ToString() + "|" +
                                      std::to_string(nVoteSignal) + "|" +
@@ -232,8 +230,7 @@ bool CGovernanceVote::CheckSignature(const CKeyID& keyID) const
 
 bool CGovernanceVote::Sign(const CBLSSecretKey& key)
 {
-    uint256 hash = GetSignatureHash();
-    CBLSSignature sig = key.Sign(hash);
+    CBLSSignature sig = key.Sign(GetSignatureHash());
     if (!sig.IsValid()) {
         return false;
     }

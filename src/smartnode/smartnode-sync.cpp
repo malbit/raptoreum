@@ -116,10 +116,10 @@ void CSmartnodeSync::ProcessTick(CConnman& connman)
 
     // reset the sync process if the last call to this function was more than 60 minutes ago (client was in sleep mode)
     static int64_t nTimeLastProcess = GetTime();
-    if(GetTime() - nTimeLastProcess > 60*60) {
+    if(GetTime() - nTimeLastProcess > 60*60 && !fSmartnodeMode) {
         LogPrintf("CSmartnodeSync::ProcessTick -- WARNING: no actions for too long, restarting sync...\n");
         Reset();
-        SwitchToNextAsset(connman);
+//        SwitchToNextAsset(connman);
         nTimeLastProcess = GetTime();
         return;
     }
@@ -130,8 +130,9 @@ void CSmartnodeSync::ProcessTick(CConnman& connman)
     }
 
     nTimeLastProcess = GetTime();
+    std::vector<CNode*> vNodesCopy = connman.CopyNodeVector(CConnman::FullyConnectedOnly);
 
-    // reset sync status in case of any other sync failure
+/*    // reset sync status in case of any other sync failure
     if(IsFailed()) {
         if(nTimeLastFailure + (1*60) < GetTime()) { // 1 minute cooldown after failed sync
             LogPrintf("CSmartnodeSync::ProcessTick -- WARNING: failed to sync, trying again...\n");
@@ -140,10 +141,9 @@ void CSmartnodeSync::ProcessTick(CConnman& connman)
         }
         return;
     }
-
+*/
     // gradually request the rest of the votes after sync finished
     if(IsSynced()) {
-        std::vector<CNode*> vNodesCopy = connman.CopyNodeVector(CConnman::FullyConnectedOnly);
         governance.RequestGovernanceObjectVotes(vNodesCopy, connman);
         connman.ReleaseNodeVector(vNodesCopy);
         return;
@@ -153,8 +153,6 @@ void CSmartnodeSync::ProcessTick(CConnman& connman)
     double nSyncProgress = double(nTriedPeerCount + (nCurrentAsset - 1) * 8) / (8*4);
     LogPrintf("CSmartnodeSync::ProcessTick -- nTick %d nCurrentAsset %d nTriedPeerCount %d nSyncProgress %f\n", nTick, nCurrentAsset, nTriedPeerCount, nSyncProgress);
     uiInterface.NotifyAdditionalDataSyncProgressChanged(nSyncProgress);
-
-    std::vector<CNode*> vNodesCopy = connman.CopyNodeVector(CConnman::FullyConnectedOnly);
 
     for (auto& pnode : vNodesCopy)
     {
@@ -245,37 +243,8 @@ void CSmartnodeSync::ProcessTick(CConnman& connman)
                     return;
                 }
 
-                // only request obj sync once from each peer, then request votes on per-obj basis
+                // only request obj sync once from each peer
                 if(netfulfilledman.HasFulfilledRequest(pnode->addr, "governance-sync")) {
-                    int nObjsLeftToAsk = governance.RequestGovernanceObjectVotes(pnode, connman);
-                    static int64_t nTimeNoObjectsLeft = 0;
-                    // check for data
-                    if(nObjsLeftToAsk == 0) {
-                        static int nLastTick = 0;
-                        static int nLastVotes = 0;
-                        if(nTimeNoObjectsLeft == 0) {
-                            // asked all objects for votes for the first time
-                            nTimeNoObjectsLeft = GetTime();
-                        }
-                        // make sure the condition below is checked only once per tick
-                        if(nLastTick == nTick) continue;
-                        if(GetTime() - nTimeNoObjectsLeft > SMARTNODE_SYNC_TIMEOUT_SECONDS &&
-                            governance.GetVoteCount() - nLastVotes < std::max(int(0.0001 * nLastVotes), SMARTNODE_SYNC_TICK_SECONDS)
-                        ) {
-                            // We already asked for all objects, waited for SMARTNODE_SYNC_TIMEOUT_SECONDS
-                            // after that and less then 0.01% or SMARTNODE_SYNC_TICK_SECONDS
-                            // (i.e. 1 per second) votes were recieved during the last tick.
-                            // We can be pretty sure that we are done syncing.
-                            LogPrintf("CSmartnodeSync::ProcessTick -- nTick %d nCurrentAsset %d -- asked for all objects, nothing to do\n", nTick, nCurrentAsset);
-                            // reset nTimeNoObjectsLeft to be able to use the same condition on resync
-                            nTimeNoObjectsLeft = 0;
-                            SwitchToNextAsset(connman);
-                            connman.ReleaseNodeVector(vNodesCopy);
-                            return;
-                        }
-                        nLastTick = nTick;
-                        nLastVotes = governance.GetVoteCount();
-                    }
                     continue;
                 }
                 netfulfilledman.AddFulfilledRequest(pnode->addr, "governance-sync");
@@ -285,9 +254,38 @@ void CSmartnodeSync::ProcessTick(CConnman& connman)
 
                 SendGovernanceSyncRequest(pnode, connman);
 
-                connman.ReleaseNodeVector(vNodesCopy);
-                return; //this will cause each peer to get one request each six seconds for the various assets we need
+                break;
             }
+        }
+    }
+
+    if (nCurrentAsset != SMARTNODE_SYNC_GOVERNANCE) {
+        connman.ReleaseNodeVector(vNodesCopy);
+        return;
+    }
+
+    for (auto& pnode : vNodesCopy) {
+        if(!netfulfilledman.HasFulfilledRequest(pnode->addr, "governance-sync")) {
+            continue;
+        }
+        int nObjsLeftToAsk = governance.RequestGovernanceObjectVotes(pnode, connman);
+        if(nObjsLeftToAsk == 0) {
+            static int64_t nTimeNoObjectsLeft = 0;
+            static int nLastTick = 0;
+            static int nLastVotes = 0;
+            if(nTimeNoObjectsLeft == 0) {
+                nTimeNoObjectsLeft = GetTime();
+            }
+            if(nLastTick == nTick) continue;
+            if(GetTime() - nTimeNoObjectsLeft > SMARTNODE_SYNC_TIMEOUT_SECONDS && governance.GetVoteCount() - nLastVotes < std::max(int(0.0001 * nLastVotes), SMARTNODE_SYNC_TICK_SECONDS)) {
+                LogPrintf("CSmartnodeSync::ProcessTick -- nTick %d nCurrentAsset %d -- asked for all objects, nothing to do\n", nTick, nCurrentAsset);
+                nTimeNoObjectsLeft = 0;
+                SwitchToNextAsset(connman);
+                connman.ReleaseNodeVector(vNodesCopy);
+                return;
+            }
+            nLastTick = nTick;
+            nLastVotes = governance.GetVoteCount();
         }
     }
     // looped through all nodes, release them
@@ -321,9 +319,12 @@ void CSmartnodeSync::AcceptedBlockHeader(const CBlockIndex *pindexNew)
 
 void CSmartnodeSync::NotifyHeaderTip(const CBlockIndex *pindexNew, bool fInitialDownload, CConnman& connman)
 {
+    if (pindexNew == nullptr) {
+        return;
+    }
     LogPrint(BCLog::MNSYNC, "CSmartnodeSync::NotifyHeaderTip -- pindexNew->nHeight: %d fInitialDownload=%d\n", pindexNew->nHeight, fInitialDownload);
 
-    if (IsFailed() || IsSynced() || !pindexBestHeader)
+    if (IsFailed() || IsSynced())
         return;
 
     if (!IsBlockchainSynced()) {
@@ -336,7 +337,13 @@ void CSmartnodeSync::UpdatedBlockTip(const CBlockIndex *pindexNew, bool fInitial
 {
     LogPrint(BCLog::MNSYNC, "CSmartnodeSync::UpdatedBlockTip -- pindexNew->nHeight: %d fInitialDownload=%d\n", pindexNew->nHeight, fInitialDownload);
 
-    if (IsFailed() || IsSynced() || !pindexBestHeader)
+    CBlockIndex* pindexTip;
+    {
+        LOCK(cs_main);
+        pindexTip = pindexBestHeader;
+    }
+
+    if (IsFailed() || IsSynced() || !pindexTip)
         return;
 
     if (!IsBlockchainSynced()) {
@@ -356,7 +363,7 @@ void CSmartnodeSync::UpdatedBlockTip(const CBlockIndex *pindexNew, bool fInitial
 
     // Note: since we sync headers first, it should be ok to use this
     static bool fReachedBestHeader = false;
-    bool fReachedBestHeaderNew = pindexNew->GetBlockHash() == pindexBestHeader->GetBlockHash();
+    bool fReachedBestHeaderNew = pindexNew->GetBlockHash() == pindexTip->GetBlockHash();
 
     if (fReachedBestHeader && !fReachedBestHeaderNew) {
         // Switching from true to false means that we previousely stuck syncing headers for some reason,
@@ -369,8 +376,8 @@ void CSmartnodeSync::UpdatedBlockTip(const CBlockIndex *pindexNew, bool fInitial
 
     fReachedBestHeader = fReachedBestHeaderNew;
 
-    LogPrint(BCLog::MNSYNC, "CSmartnodeSync::UpdatedBlockTip -- pindexNew->nHeight: %d pindexBestHeader->nHeight: %d fInitialDownload=%d fReachedBestHeader=%d\n",
-                pindexNew->nHeight, pindexBestHeader->nHeight, fInitialDownload, fReachedBestHeader);
+    LogPrint(BCLog::MNSYNC, "CSmartnodeSync::UpdatedBlockTip -- pindexNew->nHeight: %d pindexTip->nHeight: %d fInitialDownload=%d fReachedBestHeader=%d\n",
+                pindexNew->nHeight, pindexTip->nHeight, fInitialDownload, fReachedBestHeader);
 
     if (!IsBlockchainSynced() && fReachedBestHeader) {
         if (fLiteMode) {

@@ -936,7 +936,7 @@ void CSigSharesManager::CollectSigSharesToAnnounce(std::unordered_map<NodeId, st
     std::unordered_map<std::pair<Consensus::LLMQType, uint256>, std::unordered_set<NodeId>, StaticSaltedHasher> quorumNodesMap;
 
     this->sigSharesToAnnounce.ForEach([&](const SigShareKey& sigShareKey, bool) {
-        auto& signHash = sigShareKey.first;
+        const auto& signHash = sigShareKey.first;
         auto quorumMember = sigShareKey.second;
         const CSigShare* sigShare = sigShares.Get(sigShareKey);
         if (!sigShare) {
@@ -1137,7 +1137,7 @@ bool CSigSharesManager::GetSessionInfoByRecvId(NodeId nodeId, uint32_t sessionId
 CSigShare CSigSharesManager::RebuildSigShare(const CSigSharesNodeState::SessionInfo& session, const CBatchedSigShares& batchedSigShares, size_t idx)
 {
     assert(idx < batchedSigShares.sigShares.size());
-    auto& s = batchedSigShares.sigShares[idx];
+    const auto& s = batchedSigShares.sigShares[idx];
     CSigShare sigShare;
     sigShare.llmqType = session.llmqType;
     sigShare.quorumHash = session.quorumHash;
@@ -1294,7 +1294,6 @@ void CSigSharesManager::RemoveBannedNodeStates()
     // Called regularly to cleanup local node states for banned nodes
 
     LOCK2(cs_main, cs);
-    std::unordered_set<NodeId> toRemove;
     for (auto it = nodeStates.begin(); it != nodeStates.end();) {
         if (IsBanned(it->first)) {
             // re-request sigshares from other nodes

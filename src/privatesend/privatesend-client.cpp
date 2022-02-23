@@ -296,7 +296,7 @@ std::string CPrivateSendClientSession::GetStatus(bool fWaitForBlock)
             strSuffix = ".";
         else if (nStatusMessageProgress % 70 <= 50)
             strSuffix = "..";
-        else if (nStatusMessageProgress % 70 <= 70)
+        else
             strSuffix = "...";
         return strprintf(_("Submitted to smartnode, waiting in queue %s"), strSuffix);
     case POOL_STATE_ACCEPTING_ENTRIES:
@@ -308,7 +308,7 @@ std::string CPrivateSendClientSession::GetStatus(bool fWaitForBlock)
             strSuffix = ".";
         else if (nStatusMessageProgress % 70 <= 60)
             strSuffix = "..";
-        else if (nStatusMessageProgress % 70 <= 70)
+        else
             strSuffix = "...";
         return strprintf(_("Found enough users, signing ( waiting %s )"), strSuffix);
     case POOL_STATE_ERROR:
